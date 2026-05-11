@@ -66,6 +66,14 @@ pipeline {
     }
 
     post {
+        success {
+            script {
+                if (env.CHANGE_ID != null && env.CHANGE_TARGET == 'main') {
+                    // П.10: CD job в Jenkins должен называться так же (или поменяй имя здесь и в README).
+                    build job: 'devops1-model-cd', parameters: [string(name: 'IMAGE_TAG', value: "${env.TAG}")], wait: false
+                }
+            }
+        }
         failure {
             echo 'Check logs; ensure credential ID dockerhub-creds (Docker Hub access token) and DOCKERHUB_USER match the image name.'
         }

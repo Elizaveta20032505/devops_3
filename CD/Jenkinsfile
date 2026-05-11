@@ -1,0 +1,73 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Тег образа (передаёт CI при вызове этого job)')
+    }
+
+    environment {
+        DOCKERHUB_USER = "${env.DOCKERHUB_USER ?: 'YOUR_DOCKERHUB_LOGIN'}"
+        IMAGE = "${DOCKERHUB_USER}/devops1-api"
+        HOST_PORT = '18080'
+        CNAME = "cd-api-${env.BUILD_NUMBER}"
+        SCENARIO_BASE_URL = "http://127.0.0.1:18080"
+    }
+
+    stages {
+        stage('checkout_repo') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('docker_pull') {
+            steps {
+                sh 'docker --version'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DH_USER',
+                        passwordVariable: 'DH_PASS'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+                    '''
+                }
+                sh "docker pull ${IMAGE}:${params.IMAGE_TAG}"
+            }
+        }
+
+        stage('docker_run') {
+            steps {
+                sh "docker rm -f ${CNAME} 2>/dev/null || true"
+                sh "docker run -d --name ${CNAME} -p ${HOST_PORT}:8000 ${IMAGE}:${params.IMAGE_TAG}"
+                sh 'sleep 20'
+            }
+        }
+
+        stage('functional_scenarios') {
+            steps {
+                sh '''
+                    set -e
+                    export SCENARIO_BASE_URL="http://127.0.0.1:18080"
+                    python3 scripts/run_scenarios.py || python scripts/run_scenarios.py
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh "docker rm -f cd-api-${env.BUILD_NUMBER} 2>/dev/null || true"
+        }
+        failure {
+            echo 'Проверь: docker на агенте, тег IMAGE_TAG на Hub, порт 18080 свободен, в образе есть модель (иначе /health no_model, сценарии частично ок).'
+        }
+    }
+}
