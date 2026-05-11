@@ -12,9 +12,8 @@ pipeline {
     environment {
         DOCKERHUB_USER = "${env.DOCKERHUB_USER ?: 'YOUR_DOCKERHUB_LOGIN'}"
         IMAGE = "${DOCKERHUB_USER}/devops1-api"
-        HOST_PORT = '18080'
-        CNAME = "cd-api-${env.BUILD_NUMBER}"
-        SCENARIO_BASE_URL = "http://127.0.0.1:18080"
+        SCENARIO_BASE_URL = "http://127.0.0.1:8000"
+        // Postgres creds инжектятся в .env как jenkins credential (pg-creds). Никаких паролей в коде.
     }
 
     stages {
@@ -24,7 +23,7 @@ pipeline {
             }
         }
 
-        stage('docker_pull') {
+        stage('docker_login_pull') {
             steps {
                 sh 'docker --version'
                 withCredentials([
@@ -40,14 +39,40 @@ pipeline {
                     '''
                 }
                 sh "docker pull ${IMAGE}:${params.IMAGE_TAG}"
+                sh "docker tag ${IMAGE}:${params.IMAGE_TAG} devops1-api:latest"
             }
         }
 
-        stage('docker_run') {
+        stage('compose_up') {
             steps {
-                sh "docker rm -f ${CNAME} 2>/dev/null || true"
-                sh "docker run -d --name ${CNAME} -p ${HOST_PORT}:8000 ${IMAGE}:${params.IMAGE_TAG}"
-                sh 'sleep 20'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'pg-creds',
+                        usernameVariable: 'POSTGRES_USER',
+                        passwordVariable: 'POSTGRES_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        cat > .env <<EOF
+POSTGRES_DB=devops
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+EOF
+                        docker compose down -v || true
+                        docker compose up -d
+                        sleep 25
+                    '''
+                }
+            }
+        }
+
+        stage('seed_db') {
+            steps {
+                sh '''
+                    set -e
+                    docker compose exec -T api python scripts/seed_db.py || echo "seed_db skipped (нет data/raw/data.csv в образе)"
+                '''
             }
         }
 
@@ -55,7 +80,7 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    export SCENARIO_BASE_URL="http://127.0.0.1:18080"
+                    export SCENARIO_BASE_URL="http://127.0.0.1:8000"
                     python3 scripts/run_scenarios.py || python scripts/run_scenarios.py
                 '''
             }
@@ -64,10 +89,13 @@ pipeline {
 
     post {
         always {
-            sh "docker rm -f cd-api-${env.BUILD_NUMBER} 2>/dev/null || true"
+            sh 'docker compose logs --no-color > compose-logs.txt 2>&1 || true'
+            archiveArtifacts artifacts: 'compose-logs.txt', allowEmptyArchive: true
+            sh 'docker compose down -v || true'
+            sh 'rm -f .env || true'
         }
         failure {
-            echo 'Проверь: docker на агенте, тег IMAGE_TAG на Hub, порт 18080 свободен, в образе есть модель (иначе /health no_model, сценарии частично ок).'
+            echo 'Проверь: docker compose на агенте, credentials dockerhub-creds и pg-creds, свободные порты 8000/5432.'
         }
     }
 }
