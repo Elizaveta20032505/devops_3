@@ -64,7 +64,12 @@ pipeline {
 
         stage('seed_db') {
             steps {
-                bat 'docker compose exec -T api python scripts/seed_db.py || echo seed_db skipped'
+                script {
+                    def rc = bat(returnStatus: true, script: 'docker compose exec -T api python scripts/seed_db.py')
+                    if (rc != 0) {
+                        echo "seed_db skipped (rc=${rc}) -- data/raw/data.csv нет в образе либо не подтянут DVC"
+                    }
+                }
             }
         }
 
@@ -77,11 +82,11 @@ pipeline {
 
     post {
         always {
-            bat 'docker compose logs --no-color > compose-logs.txt 2>&1'
+            bat(returnStatus: true, script: 'docker compose logs --no-color > compose-logs.txt 2>&1')
             archiveArtifacts artifacts: 'compose-logs.txt', allowEmptyArchive: true
-            bat 'docker compose down -v'
-            bat 'if exist .env del /f /q .env'
-            bat 'docker logout'
+            bat(returnStatus: true, script: 'docker compose down -v')
+            bat(returnStatus: true, script: 'if exist .env del /f /q .env')
+            bat(returnStatus: true, script: 'docker logout')
         }
         failure {
             echo 'Проверь: docker compose в PATH у агента, creds dockerhub-creds и pg-creds, свободные порты 8000/5432.'
