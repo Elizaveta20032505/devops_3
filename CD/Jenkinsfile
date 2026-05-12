@@ -1,3 +1,7 @@
+// CD (Windows): pull образа -> docker compose up (api+db) -> seed -> сценарии.
+// Creds: dockerhub-creds, pg-creds (usernamePassword: POSTGRES_USER / POSTGRES_PASSWORD).
+// Global ENV: DOCKERHUB_USER.
+
 pipeline {
     agent any
 
@@ -6,14 +10,13 @@ pipeline {
     }
 
     parameters {
-        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Тег образа (передаёт CI при вызове этого job)')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Тег образа на Docker Hub')
     }
 
     environment {
         DOCKERHUB_USER = "${env.DOCKERHUB_USER ?: 'YOUR_DOCKERHUB_LOGIN'}"
         IMAGE = "${DOCKERHUB_USER}/devops1-api"
         SCENARIO_BASE_URL = "http://127.0.0.1:8000"
-        // Postgres creds инжектятся в .env как jenkins credential (pg-creds). Никаких паролей в коде.
     }
 
     stages {
@@ -25,7 +28,7 @@ pipeline {
 
         stage('docker_login_pull') {
             steps {
-                sh 'docker --version'
+                bat 'docker --version'
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-creds',
@@ -33,13 +36,10 @@ pipeline {
                         passwordVariable: 'DH_PASS'
                     )
                 ]) {
-                    sh '''
-                        set -e
-                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-                    '''
+                    bat 'echo %DH_PASS% | docker login -u %DH_USER% --password-stdin'
                 }
-                sh "docker pull ${IMAGE}:${params.IMAGE_TAG}"
-                sh "docker tag ${IMAGE}:${params.IMAGE_TAG} devops1-api:latest"
+                bat "docker pull ${IMAGE}:${params.IMAGE_TAG}"
+                bat "docker tag ${IMAGE}:${params.IMAGE_TAG} devops1-api:latest"
             }
         }
 
@@ -52,50 +52,39 @@ pipeline {
                         passwordVariable: 'POSTGRES_PASSWORD'
                     )
                 ]) {
-                    sh '''
-                        set -e
-                        cat > .env <<EOF
-POSTGRES_DB=devops
-POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-EOF
-                        docker compose down -v || true
+                    bat '''
+                        (echo POSTGRES_DB=devops& echo POSTGRES_USER=%POSTGRES_USER%& echo POSTGRES_PASSWORD=%POSTGRES_PASSWORD%) > .env
+                        docker compose down -v
                         docker compose up -d
-                        sleep 25
                     '''
+                    bat 'ping -n 26 127.0.0.1 > nul'
                 }
             }
         }
 
         stage('seed_db') {
             steps {
-                sh '''
-                    set -e
-                    docker compose exec -T api python scripts/seed_db.py || echo "seed_db skipped (нет data/raw/data.csv в образе)"
-                '''
+                bat 'docker compose exec -T api python scripts/seed_db.py || echo seed_db skipped'
             }
         }
 
         stage('functional_scenarios') {
             steps {
-                sh '''
-                    set -e
-                    export SCENARIO_BASE_URL="http://127.0.0.1:8000"
-                    python3 scripts/run_scenarios.py || python scripts/run_scenarios.py
-                '''
+                bat 'set SCENARIO_BASE_URL=http://127.0.0.1:8000 && python scripts/run_scenarios.py'
             }
         }
     }
 
     post {
         always {
-            sh 'docker compose logs --no-color > compose-logs.txt 2>&1 || true'
+            bat 'docker compose logs --no-color > compose-logs.txt 2>&1'
             archiveArtifacts artifacts: 'compose-logs.txt', allowEmptyArchive: true
-            sh 'docker compose down -v || true'
-            sh 'rm -f .env || true'
+            bat 'docker compose down -v'
+            bat 'if exist .env del /f /q .env'
+            bat 'docker logout'
         }
         failure {
-            echo 'Проверь: docker compose на агенте, credentials dockerhub-creds и pg-creds, свободные порты 8000/5432.'
+            echo 'Проверь: docker compose в PATH у агента, creds dockerhub-creds и pg-creds, свободные порты 8000/5432.'
         }
     }
 }
