@@ -26,6 +26,13 @@ pipeline {
             }
         }
 
+        stage('cleanup_before') {
+            steps {
+                bat(returnStatus: true, script: 'docker compose down -v')
+                bat(returnStatus: true, script: 'docker rm -f devops2-db devops2-api')
+            }
+        }
+
         stage('docker_login_pull') {
             steps {
                 bat 'docker --version'
