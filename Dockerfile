@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY config.ini .
 COPY src ./src
+COPY scripts ./scripts
 COPY experiments ./experiments
 
 EXPOSE 8000
