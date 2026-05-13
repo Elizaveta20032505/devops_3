@@ -55,9 +55,10 @@ pipeline {
                         usernameVariable: 'POSTGRES_USER',
                         passwordVariable: 'POSTGRES_PASSWORD'
                     ),
-                    string(
+                    usernamePassword(
                         credentialsId: 'vault-token-creds',
-                        variable: 'VAULT_TOKEN'
+                        usernameVariable: 'VAULT_TOKEN_USER_UNUSED',
+                        passwordVariable: 'VAULT_TOKEN'
                     )
                 ]) {
                     bat '''
