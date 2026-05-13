@@ -73,7 +73,8 @@ pipeline {
 
         stage('vault_check') {
             steps {
-                bat 'docker exec devops3-vault vault kv get -mount=secret postgres'
+                // metadata — без вывода пароля в лог Jenkins
+                bat 'docker exec devops3-vault vault kv metadata get -mount=secret postgres'
             }
         }
 
@@ -82,7 +83,7 @@ pipeline {
                 script {
                     def rc = bat(returnStatus: true, script: 'docker compose --env-file secrets.env exec -T api python scripts/seed_db.py')
                     if (rc != 0) {
-                        echo "seed_db skipped (rc=${rc}) -- data/raw/data.csv нет в образе либо не подтянут DVC"
+                        echo "seed_db failed (rc=${rc}) — см. лог выше (часто: нет src/secrets.py в образе, нет data.csv, ошибка Vault/БД)."
                     }
                 }
             }
